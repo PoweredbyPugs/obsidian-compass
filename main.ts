@@ -1,134 +1,125 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { Plugin, WorkspaceLeaf, ItemView } from "obsidian";
 
-// Remember to rename these classes and interfaces!
+// Compass View Class
+class CompassView extends ItemView {
+    static VIEW_TYPE = "compass-view";
 
-interface MyPluginSettings {
-	mySetting: string;
+    private plugin: CompassPlugin;
+
+    constructor(leaf: WorkspaceLeaf, plugin: CompassPlugin) {
+        super(leaf);
+        this.plugin = plugin;
+    }
+
+    getViewType(): string {
+        return CompassView.VIEW_TYPE;
+    }
+
+    getDisplayText(): string {
+        return "Compass";
+    }
+
+    async onOpen(): Promise<void> {
+        this.render();
+    }
+
+    async onClose(): Promise<void> {
+        console.log("Compass View closed.");
+    }
+
+    async render() {
+        const container = this.containerEl.children[1];
+        container.empty();
+
+        // Get the current note
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) {
+            container.createEl("p", { text: "No active note selected." });
+            return;
+        }
+
+        const content = await this.app.vault.cachedRead(activeFile);
+        const directions = ["north", "south", "east", "west"];
+        const results: { direction: string; links: string[] }[] = [];
+
+        directions.forEach((dir) => {
+            const regex = new RegExp(
+                `\`\`\`ad-${dir}[\\s\\S]*?\\[\\[(.*?)\\]\\][\\s\\S]*?\`\`\``,
+                "gm"
+            );
+            const matches = content.matchAll(regex);
+            const links = Array.from(matches, (match) => match[1]);
+            results.push({ direction: dir, links });
+        });
+
+        // Render the links in the side panel
+        results.forEach((result) => {
+            const section = container.createEl("div", { cls: "compass-section" });
+            section.createEl("h3", { text: result.direction.toUpperCase() });
+
+            if (result.links.length === 0) {
+                section.createEl("p", { text: "No links found." });
+            } else {
+                result.links.forEach((link) => {
+                    const linkEl = section.createEl("p");
+                    linkEl.createEl("a", {
+                        text: link,
+                        href: `obsidian://open?vault=${this.app.vault.getName()}&file=${encodeURIComponent(
+                            link
+                        )}`,
+                    });
+                });
+            }
+        });
+    }
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+// Plugin Class
+export default class CompassPlugin extends Plugin {
+    async onload() {
+        console.log("Loading CompassPlugin...");
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+        // Register the compass view
+        this.registerView(
+            CompassView.VIEW_TYPE,
+            (leaf) => new CompassView(leaf, this)
+        );
 
-	async onload() {
-		await this.loadSettings();
+        // Add a command to open the compass view
+        this.addCommand({
+            id: "open-compass-view",
+            name: "Open Compass View",
+            callback: () => this.activateCompassView(),
+        });
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+        // Automatically open the compass view when the plugin loads
+        this.activateCompassView();
+    }
+
+    onunload() {
+        console.log("Unloading CompassPlugin...");
+        this.app.workspace.detachLeavesOfType(CompassView.VIEW_TYPE);
+    }
+
+	async activateCompassView() {
+		// Check if the view is already open
+		const existingLeaf = this.app.workspace.getLeavesOfType(CompassView.VIEW_TYPE);
+		if (existingLeaf.length > 0) {
+			this.app.workspace.revealLeaf(existingLeaf[0]);
+			return;
+		}
+	
+		// Get a right sidebar leaf or create a new one if it doesn't exist
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if (!leaf) {
+			console.error("No right leaf available to attach the Compass View.");
+			return;
+		}
+	
+		// Attach the Compass View to the right leaf
+		await leaf.setViewState({
+			type: CompassView.VIEW_TYPE,
 		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+		console.log("Compass View activated.");
 	}
 }
